@@ -1,0 +1,32 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "migrate": "node db/migrate.js",
+    "migrate:status": "node db/migrate.js --status",
+    "migrate:dry": "node db/migrate.js --dry-run",
+    "migrate:make": "node db/make-migration.js",
+    "fresh-install": "node db/fresh-install.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "boutique-pos": "file:..",
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.22.2",
+    "redis": "^4.6.13"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}

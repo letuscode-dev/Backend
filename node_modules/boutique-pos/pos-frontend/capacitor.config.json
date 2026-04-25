@@ -1,0 +1,8 @@
+{
+  "appId": "com.tone.pos",
+  "appName": "T-ONE",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": true
+  }
+}
