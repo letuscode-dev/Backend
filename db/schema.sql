@@ -135,6 +135,21 @@ CREATE TABLE IF NOT EXISTS shifts (
   variance DECIMAL(10,2) NULL
 );
 
+CREATE TABLE IF NOT EXISTS expenses (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  amount DECIMAL(10,2) NOT NULL,
+  category VARCHAR(120) NULL,
+  description VARCHAR(255) NOT NULL,
+  spent_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_expenses_user_id (user_id),
+  KEY idx_expenses_spent_at (spent_at),
+  CONSTRAINT fk_expenses_user FOREIGN KEY (user_id) REFERENCES users(id)
+    ON UPDATE CASCADE
+    ON DELETE CASCADE
+);
+
 -- Optional indexes (run once):
 -- CREATE INDEX idx_sales_created_at ON sales(created_at);
 -- CREATE INDEX idx_sale_items_sale_id ON sale_items(sale_id);
@@ -143,6 +158,7 @@ CREATE TABLE IF NOT EXISTS shifts (
 -- CREATE INDEX idx_stocktake_sessions_created_at ON stocktake_sessions(created_at);
 -- CREATE INDEX idx_stocktake_items_session_id ON stocktake_items(session_id);
 -- CREATE INDEX idx_shifts_cashier_id ON shifts(cashier_id);
+-- CREATE INDEX idx_expenses_spent_at ON expenses(spent_at);
 
 -- If you created tables before adding `can_discount`, run this once:
 -- ALTER TABLE users ADD COLUMN can_discount TINYINT(1) NOT NULL DEFAULT 0;

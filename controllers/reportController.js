@@ -29,7 +29,7 @@ function normalizeMySqlDateTime(raw, kind) {
   return `${date} ${hh}:${mm}:${ss}`;
 }
 
-exports.getStocktake = async (req, res) => {
+exports.getOverview = async (req, res) => {
   try {
     const viewer = req.user;
 
@@ -67,6 +67,49 @@ exports.getStocktake = async (req, res) => {
       JOIN sale_items si ON si.sale_id = s.id
       LEFT JOIN products p ON p.id = si.product_id
       WHERE s.created_at >= ? AND s.created_at <= ?`,
+      [from, to]
+    );
+
+    const expenseSummaryRows = await query(
+      `SELECT
+        COUNT(*) AS entriesCount,
+        COALESCE(SUM(amount), 0) AS totalExpenses
+      FROM expenses
+      WHERE spent_at >= ? AND spent_at <= ?`,
+      [from, to]
+    );
+
+    const expensesByUser = await query(
+      `SELECT
+        u.id AS userId,
+        u.name AS userName,
+        u.username,
+        COUNT(e.id) AS entriesCount,
+        COALESCE(SUM(e.amount), 0) AS totalAmount
+      FROM expenses e
+      JOIN users u ON u.id = e.user_id
+      WHERE e.spent_at >= ? AND e.spent_at <= ?
+      GROUP BY u.id, u.name, u.username
+      ORDER BY totalAmount DESC, entriesCount DESC, u.name ASC`,
+      [from, to]
+    );
+
+    const expenses = await query(
+      `SELECT
+        e.id,
+        e.user_id AS userId,
+        u.name AS userName,
+        u.username,
+        e.amount,
+        e.category,
+        e.description,
+        e.spent_at AS spentAt,
+        e.created_at AS createdAt
+      FROM expenses e
+      JOIN users u ON u.id = e.user_id
+      WHERE e.spent_at >= ? AND e.spent_at <= ?
+      ORDER BY e.spent_at DESC, e.id DESC
+      LIMIT 500`,
       [from, to]
     );
 
@@ -152,11 +195,14 @@ exports.getStocktake = async (req, res) => {
     const summary = summaryRows?.[0] || { salesCount: 0, subtotal: 0, total: 0 };
     const agg = itemAggRows?.[0] || { itemsSold: 0, productsSold: 0 };
     const cogsSummary = cogsRows?.[0] || { cogs: 0 };
+    const expenseSummary = expenseSummaryRows?.[0] || { entriesCount: 0, totalExpenses: 0 };
     const avgSale = Number(summary.salesCount) > 0 ? Number(summary.total) / Number(summary.salesCount) : 0;
     const cogs = Number(cogsSummary.cogs || 0);
     const revenue = Number(summary.total || 0);
     const grossProfit = revenue - cogs;
     const marginPct = revenue > 0 ? Math.round((grossProfit / revenue) * 10000) / 100 : null;
+    const totalExpenses = Number(expenseSummary.totalExpenses || 0);
+    const netAfterExpenses = grossProfit - totalExpenses;
 
     return res.json({
       from,
@@ -170,9 +216,18 @@ exports.getStocktake = async (req, res) => {
         total: revenue,
         cogs,
         grossProfit: Math.round(grossProfit * 100) / 100,
+        totalExpenses,
+        netAfterExpenses: Math.round(netAfterExpenses * 100) / 100,
         marginPct,
         avgSale: Number.isFinite(avgSale) ? Math.round(avgSale * 100) / 100 : 0,
+        expenseEntries: Number(expenseSummary.entriesCount || 0),
       },
+      expensesSummary: {
+        totalExpenses,
+        entriesCount: Number(expenseSummary.entriesCount || 0),
+      },
+      expensesByUser: Array.isArray(expensesByUser) ? expensesByUser : [],
+      expenses: Array.isArray(expenses) ? expenses : [],
       products: Array.isArray(products) ? products : [],
       lines: Array.isArray(lines) ? lines : [],
       lineLimit: 500,

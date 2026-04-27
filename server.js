@@ -37,6 +37,7 @@ const reportRoutes = require("./routes/reportRoutes");
 const purchaseRoutes = require("./routes/purchaseRoutes");
 const stocktakeRoutes = require("./routes/stocktakeRoutes");
 const shiftRoutes = require("./routes/shiftRoutes");
+const expenseRoutes = require("./routes/expenseRoutes");
 
 app.use("/api/auth", authRoutes);
 // Everything else under /api requires auth.
@@ -48,6 +49,7 @@ app.use("/api/reports", reportRoutes);
 app.use("/api/purchases", purchaseRoutes);
 app.use("/api/stocktakes", stocktakeRoutes);
 app.use("/api/shifts", shiftRoutes);
+app.use("/api/expenses", expenseRoutes);
 
 // Port
 const PORT = process.env.PORT || 5000;
