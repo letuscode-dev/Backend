@@ -17,6 +17,26 @@ function parseNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseClientSaleId(value) {
+  const s = String(value || "").trim();
+  if (!s) return null;
+  if (s.length > 64) return null;
+  return s;
+}
+
+function toMySqlDateTime(value) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+}
+
 function normalizeMySqlDateTime(raw, kind) {
   const s = String(raw || "").trim();
   if (!s) return null;
@@ -99,6 +119,55 @@ async function recomputeShiftTotalsForCashierAtTime(conn, cashierId, atTime) {
     salesTotal: toMoney(salesTotal),
     expectedCash,
     variance,
+  };
+}
+
+async function loadSalePayloadForResponse(id) {
+  const saleRows = await query(
+    db,
+    `SELECT
+      s.id,
+      s.customer_name AS customerName,
+      s.subtotal,
+      s.total,
+      s.created_at AS createdAt,
+      s.client_sale_id AS clientSaleId,
+      u.id AS cashierId,
+      u.name AS cashierName,
+      u.role AS cashierRole
+    FROM sales s
+    LEFT JOIN users u ON u.id = s.cashier_id
+    WHERE s.id = ?`,
+    [id]
+  );
+
+  if (!saleRows || saleRows.length === 0) return null;
+
+  const items = await query(
+    db,
+    `SELECT
+      product_id AS productId,
+      product_name AS name,
+      qty,
+      unit_price AS unitPrice,
+      unit_cost AS unitCost,
+      line_total AS lineTotal
+    FROM sale_items
+    WHERE sale_id = ?
+    ORDER BY id ASC`,
+    [id]
+  );
+
+  const sale = saleRows[0];
+  return {
+    id: sale.id,
+    clientSaleId: sale.clientSaleId || null,
+    createdAt: sale.createdAt,
+    customerName: sale.customerName,
+    subtotal: sale.subtotal,
+    total: sale.total,
+    cashier: sale.cashierId != null ? { id: sale.cashierId, name: sale.cashierName, role: sale.cashierRole } : null,
+    items: Array.isArray(items) ? items : [],
   };
 }
 
@@ -238,9 +307,18 @@ exports.getSaleById = async (req, res) => {
 exports.createSale = async (req, res) => {
   const rawItems = req.body?.items;
   const customerName = String(req.body?.customerName || "").trim() || null;
+  const clientSaleId = parseClientSaleId(req.body?.clientSaleId);
+  const createdAtRaw = req.body?.createdAt;
+  const createdAt = createdAtRaw == null || createdAtRaw === "" ? null : toMySqlDateTime(createdAtRaw);
 
   if (!Array.isArray(rawItems) || rawItems.length === 0) {
     return res.status(400).json({ error: "Sale items are required" });
+  }
+  if (req.body?.clientSaleId != null && clientSaleId == null) {
+    return res.status(400).json({ error: "clientSaleId must be a non-empty string up to 64 characters" });
+  }
+  if (createdAtRaw != null && createdAt == null) {
+    return res.status(400).json({ error: "createdAt must be a valid ISO date-time" });
   }
 
   const itemsRequest = rawItems
@@ -258,6 +336,17 @@ exports.createSale = async (req, res) => {
   try {
     const cashier = req.user;
     const canDiscount = String(cashier.role) === "admin" || Boolean(cashier.canDiscount);
+
+    if (clientSaleId) {
+      const existingRows = await query(db, "SELECT id FROM sales WHERE client_sale_id = ? LIMIT 1", [clientSaleId]);
+      if (existingRows && existingRows.length > 0) {
+        const existingSale = await loadSalePayloadForResponse(existingRows[0].id);
+        if (!existingSale) {
+          return res.status(404).json({ error: "Existing synced sale could not be loaded" });
+        }
+        return res.json(existingSale);
+      }
+    }
 
     const txResult = await withTransaction(db, async (conn) => {
       // Lock products in a consistent order to reduce deadlock risk under concurrent checkouts.
@@ -323,11 +412,13 @@ exports.createSale = async (req, res) => {
 
       const total = subtotal;
 
-      const saleResult = await queryConn(
-        conn,
-        "INSERT INTO sales (cashier_id, customer_name, subtotal, total) VALUES (?, ?, ?, ?)",
-        [cashier.id, customerName, subtotal, total]
-      );
+      const insertSql = createdAt
+        ? "INSERT INTO sales (cashier_id, customer_name, subtotal, total, client_sale_id, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+        : "INSERT INTO sales (cashier_id, customer_name, subtotal, total, client_sale_id) VALUES (?, ?, ?, ?, ?)";
+      const insertParams = createdAt
+        ? [cashier.id, customerName, subtotal, total, clientSaleId, createdAt]
+        : [cashier.id, customerName, subtotal, total, clientSaleId];
+      const saleResult = await queryConn(conn, insertSql, insertParams);
       const saleId = saleResult.insertId;
 
       const computedItemsOrdered = computedItems.sort((a, b) => a.idx - b.idx);
@@ -351,23 +442,12 @@ exports.createSale = async (req, res) => {
       return { saleId, computedItems: computedItemsOrdered.map(({ idx, ...rest }) => rest), subtotal, total };
     });
 
-    // Fetch createdAt from DB (authoritative timestamp).
-    const saleRows = await query(
-      db,
-      `SELECT id, customer_name AS customerName, subtotal, total, created_at AS createdAt
-       FROM sales WHERE id = ?`,
-      [txResult.saleId]
-    );
+    const createdSale = await loadSalePayloadForResponse(txResult.saleId);
+    if (!createdSale) {
+      return res.status(404).json({ error: "Created sale could not be loaded" });
+    }
 
-    return res.status(201).json({
-      id: txResult.saleId,
-      createdAt: saleRows?.[0]?.createdAt,
-      customerName,
-      subtotal: txResult.subtotal,
-      total: txResult.total,
-      cashier: { id: cashier.id, name: cashier.name, role: cashier.role },
-      items: txResult.computedItems,
-    });
+    return res.status(201).json(createdSale);
   } catch (err) {
     const status = err instanceof HttpError && Number.isFinite(err.status) ? err.status : 500;
     if (status >= 500) console.error(err);

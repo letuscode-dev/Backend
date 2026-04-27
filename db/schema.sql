@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS sales (
   customer_name VARCHAR(255) NULL,
   subtotal DECIMAL(10,2) NOT NULL DEFAULT 0,
   total DECIMAL(10,2) NOT NULL DEFAULT 0,
+  client_sale_id VARCHAR(64) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_sales_client_sale_id (client_sale_id),
   CONSTRAINT fk_sales_cashier FOREIGN KEY (cashier_id) REFERENCES users(id)
     ON UPDATE CASCADE
     ON DELETE SET NULL
